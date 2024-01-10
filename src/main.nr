@@ -62,7 +62,13 @@ pub fn validate_sorted_transcript<N, K>(
                 }
             } else {
                 // Same slot, new counter
-                let idx = if i == 0 { 0 } else { i - 1 };
+                // Noir complains about the index being out of bounds even after an assert that it won't, so wrap it in a conditional
+                let idx = if i != 0 {
+                    i - 1
+                } else {
+                    assert(false, "First item must change slot");
+                    0
+                };
                 let prev_item = sorted_transcript_with_rewinds[idx];
                 if item_being_validated.rewind_target.is_none() {
                     // Base case, we are not rewinding
@@ -170,15 +176,15 @@ mod tests {
     // This has the following call graph:
     // | 1-INF/w
     // |
-    // └────────┐
+    // ----------
     //          | 10-15/w
     //          |
-    // ┌────────┘
+    // ----------
     // | 
-    // └────────┐
+    // ----------
     //          | 20-25/w
     //          |
-    // ┌────────┘
+    // ----------
     // | 30-INF/r
     //
     #[test]
@@ -209,13 +215,13 @@ mod tests {
     // This has the following call graph:
     // | 1-INF/w
     // |
-    // └────────┐
+    // ----------
     //          | 10-25/w
     //          |
-    //          └────────┐
+    //          ----------
     //                   | 15-20/w
     //                   |
-    // ┌─────────────────┘
+    // ┌------------------
     // | 30-INF/r
     //
     #[test]
