@@ -9,6 +9,26 @@ struct StorageOp {
     value: Field,
 }
 
+impl StorageOp {
+    pub fn new(slot: Field, value: Field, is_write: bool, counter: u32, lifetime_end: u32) -> Self {
+        Self {
+            counter: counter,
+            lifetime_end: lifetime_end,
+            is_write: is_write,
+            slot: slot,
+            value: value,
+        }
+    }
+
+    pub fn read(slot: Field, value: Field, counter: u32, lifetime_end: u32) -> Self {
+        StorageOp::new(slot, value, false, counter, lifetime_end)
+    }
+
+    pub fn write(slot: Field, value: Field, counter: u32, lifetime_end: u32) -> Self {
+        StorageOp::new(slot, value, true, counter, lifetime_end)
+    }
+}
+
 impl Default for StorageOp {
     fn default() -> Self {
         Self {
@@ -32,6 +52,15 @@ struct StorageLeaf {
     value: Field,
 }
 
+impl StorageLeaf {
+    pub fn new(slot: Field, value: Field) -> Self {
+        Self {
+            slot: slot,
+            value: value,
+        }
+    }
+}
+
 impl Default for StorageLeaf {
     fn default() -> Self {
         Self {
@@ -49,7 +78,23 @@ impl Eq for StorageLeaf {
 
 struct SortedStorageOp {
     op: StorageOp,
-    is_rewind: Option<u32>
+    rewind_target: Option<u32>
+}
+
+impl SortedStorageOp {
+    pub fn new(op: StorageOp) -> Self {
+        Self {
+            op: op,
+            rewind_target: Option::none(),
+        }
+    }
+
+    pub fn rewind(slot: Field, value: Field, counter: u32, lifetime_end: u32, rewind_to: u32) -> Self {
+        Self {
+            op: StorageOp::write(slot, value, counter, lifetime_end),
+            rewind_target: Option::some(rewind_to),
+        }
+    }
 }
 
 fn is_option_eq<T>(a: Option<T>, b: Option<T>) -> bool where T: Eq {
@@ -66,13 +111,13 @@ impl Default for SortedStorageOp {
     fn default() -> Self {
         Self {
             op: StorageOp::default(),
-            is_rewind: Option::none(),
+            rewind_target: Option::none(),
         }
     }
 }
 
 impl Eq for SortedStorageOp {
     fn eq(self, other: Self) -> bool {
-        (self.op == other.op) & is_option_eq(self.is_rewind, other.is_rewind) 
+        (self.op == other.op) & is_option_eq(self.rewind_target, other.rewind_target) 
     }
 }

@@ -4,12 +4,14 @@ mod utils;
 use utils::{is_empty, array_length, validate_array};
 use types::{StorageOp, StorageLeaf, SortedStorageOp};
 
-fn validate_sorted_transcript<N, K>(
+pub fn validate_sorted_transcript<N, K>(
     sorted_transcript: [StorageOp; N],
     sorted_transcript_with_rewinds: [SortedStorageOp; K],
     leaves: [StorageLeaf; N]
 ) {
-    assert_eq(N * 2, K, "Invalid array sizes");
+    assert(
+        (K as u32) >= (N as u32), "We need at least the same space for rewinds than the original transcript"
+    );
     // Ensure that the sorted_transcript is sorted by slot and counter
     validate_array(sorted_transcript);
     let sorted_transcript_length = array_length(sorted_transcript);
@@ -45,7 +47,7 @@ fn validate_sorted_transcript<N, K>(
         let item_being_validated = sorted_transcript_with_rewinds[i];
         if !is_empty(item_being_validated) {
             if item_being_validated.op.slot != last_slot {
-                assert(item_being_validated.is_rewind.is_none(), "New slot, so we cannot rewinding");
+                assert(item_being_validated.rewind_target.is_none(), "New slot, so we cannot rewinding");
 
                 let original_op = sorted_transcript[next_op];
                 assert(original_op.eq(item_being_validated.op), "Original op must match");
@@ -62,7 +64,7 @@ fn validate_sorted_transcript<N, K>(
                 // Same slot, new counter
                 let idx = if i == 0 { 0 } else { i - 1 };
                 let prev_item = sorted_transcript_with_rewinds[idx];
-                if item_being_validated.is_rewind.is_none() {
+                if item_being_validated.rewind_target.is_none() {
                     // Base case, we are not rewinding
                     let original_op = sorted_transcript[next_op];
                     assert(original_op.eq(item_being_validated.op), "Original op must match");
@@ -80,15 +82,12 @@ fn validate_sorted_transcript<N, K>(
                 } else {
                     // Rewind!!!
                     assert(
-                        prev_item.op.lifetime_end < item_being_validated.op.counter, "We only rewind if the previous op is reverted"
-                    );
-                    assert(
                         prev_item.op.lifetime_end < item_being_validated.op.lifetime_end, "The previous op must revert in a more nested segment than ours"
                     );
                     let last_reverted_op = prev_item.op;
 
                     // Lets validate the hint
-                    let hinted_first_reverted_op_index = item_being_validated.is_rewind.unwrap();
+                    let hinted_first_reverted_op_index = item_being_validated.rewind_target.unwrap();
                     assert(hinted_first_reverted_op_index < (i as u32), "Hinted index must be valid");
                     let hinted_first_reverted_op = sorted_transcript_with_rewinds[hinted_first_reverted_op_index].op;
                     assert(
@@ -139,4 +138,94 @@ fn main(
     leaves: [StorageLeaf; LENGTH]
 ) {
     validate_sorted_transcript(sorted_transcript, sorted_transcript_with_rewinds, leaves);
+}
+
+mod tests {
+    use crate::validate_sorted_transcript;
+    use crate::utils::{is_empty, array_length, validate_array};
+    use crate::types::{StorageOp, StorageLeaf, SortedStorageOp};
+
+    global INF = 4294967295;
+
+    #[test]
+    fn basic_validation() {
+        let slot = 27;
+        let sorted_transcript = [StorageOp::read(slot, 100, 0, INF)];
+        let with_rewinds = sorted_transcript.map(|op: StorageOp| SortedStorageOp::new(op));
+        let leaves = [StorageLeaf::new(slot, 100)];
+
+        validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
+    }
+
+    #[test]
+    fn write_then_read_validation() {
+        let slot = 27;
+        let sorted_transcript = [StorageOp::write(slot, 120, 0, INF), StorageOp::read(slot, 120, 1, INF)];
+        let with_rewinds = sorted_transcript.map(|op: StorageOp| SortedStorageOp::new(op));
+        let leaves = [StorageLeaf::new(slot, 10), StorageLeaf::default()];
+
+        validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
+    }
+
+    #[test]
+    fn simple_rewind_test() {
+        let slot = 27;
+        let sorted_transcript = [
+            StorageOp::write(slot, 100, 0, INF),
+            StorageOp::write(slot, 101, 10, 15),
+            StorageOp::write(slot, 102, 20, 25),
+            StorageOp::read(slot, 100, 30, INF)
+        ];
+
+        let with_rewinds = [
+            SortedStorageOp::new(sorted_transcript[0]),
+            SortedStorageOp::new(sorted_transcript[1]),
+            SortedStorageOp::rewind(slot, 100, 15, INF, 1),
+            SortedStorageOp::new(sorted_transcript[2]),
+            SortedStorageOp::rewind(slot, 100, 25, INF, 3),
+            SortedStorageOp::new(sorted_transcript[3])
+        ];
+
+        let mut leaves = sorted_transcript.map(|_op| StorageLeaf::default());
+        leaves[0] = StorageLeaf::new(slot, 10);
+
+        validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
+    }
+
+    // This has the following call graph:
+    // | 1-INF/w
+    // |
+    // └────────┐
+    //          | 10-25/w
+    //          |
+    //          └────────┐
+    //                   | 15-20/w
+    //                   |
+    // ┌─────────────────┘
+    // | 30-INF/r
+    //
+    #[test]
+    fn rewind_nested_writes() {
+        let slot = 27;
+        let sorted_transcript = [
+            StorageOp::write(slot, 100, 0, INF),
+            StorageOp::write(slot, 101, 10, 25),
+            StorageOp::write(slot, 102, 15, 20),
+            StorageOp::read(slot, 100, 30, INF)
+        ];
+
+        let with_rewinds = [
+            SortedStorageOp::new(sorted_transcript[0]),
+            SortedStorageOp::new(sorted_transcript[1]),
+            SortedStorageOp::new(sorted_transcript[2]),
+            SortedStorageOp::rewind(slot, 101, 20, 25, 2),
+            SortedStorageOp::rewind(slot, 100, 25, INF, 1),
+            SortedStorageOp::new(sorted_transcript[3])
+        ];
+
+        let mut leaves = sorted_transcript.map(|_op| StorageLeaf::default());
+        leaves[0] = StorageLeaf::new(slot, 10);
+
+        validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
+    }
 }
