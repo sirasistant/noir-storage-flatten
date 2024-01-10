@@ -167,11 +167,25 @@ mod tests {
         validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
     }
 
+    // This has the following call graph:
+    // | 1-INF/w
+    // |
+    // └────────┐
+    //          | 10-15/w
+    //          |
+    // ┌────────┘
+    // | 
+    // └────────┐
+    //          | 20-25/w
+    //          |
+    // ┌────────┘
+    // | 30-INF/r
+    //
     #[test]
     fn simple_rewind_test() {
         let slot = 27;
         let sorted_transcript = [
-            StorageOp::write(slot, 100, 0, INF),
+            StorageOp::write(slot, 100, 1, INF),
             StorageOp::write(slot, 101, 10, 15),
             StorageOp::write(slot, 102, 20, 25),
             StorageOp::read(slot, 100, 30, INF)
