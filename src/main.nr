@@ -212,6 +212,29 @@ mod tests {
         validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
     }
 
+    #[test(should_fail_with = "Previous op must live long enough")]
+    fn simple_rewind_test_without_rewinds() {
+        let slot = 27;
+        let sorted_transcript = [
+            StorageOp::write(slot, 100, 1, INF),
+            StorageOp::write(slot, 101, 10, 15),
+            StorageOp::write(slot, 102, 20, 25),
+            StorageOp::read(slot, 100, 30, INF)
+        ];
+
+        let with_rewinds = [
+            SortedStorageOp::new(sorted_transcript[0]),
+            SortedStorageOp::new(sorted_transcript[1]),
+            SortedStorageOp::new(sorted_transcript[2]),
+            SortedStorageOp::new(sorted_transcript[3])
+        ];
+
+        let mut leaves = sorted_transcript.map(|_op| StorageLeaf::default());
+        leaves[0] = StorageLeaf::new(slot, 10);
+
+        validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
+    }
+
     // This has the following call graph:
     // | 1-INF/w
     // |
@@ -240,6 +263,29 @@ mod tests {
             SortedStorageOp::new(sorted_transcript[2]),
             SortedStorageOp::rewind(slot, 101, 20, 25, 2),
             SortedStorageOp::rewind(slot, 100, 25, INF, 1),
+            SortedStorageOp::new(sorted_transcript[3])
+        ];
+
+        let mut leaves = sorted_transcript.map(|_op| StorageLeaf::default());
+        leaves[0] = StorageLeaf::new(slot, 10);
+
+        validate_sorted_transcript(sorted_transcript, with_rewinds, leaves);
+    }
+
+    #[test(should_fail_with = "Previous op must live long enough")]
+    fn rewind_nested_writes_without_rewinds() {
+        let slot = 27;
+        let sorted_transcript = [
+            StorageOp::write(slot, 100, 0, INF),
+            StorageOp::write(slot, 101, 10, 25),
+            StorageOp::write(slot, 102, 15, 20),
+            StorageOp::read(slot, 100, 30, INF)
+        ];
+
+        let with_rewinds = [
+            SortedStorageOp::new(sorted_transcript[0]),
+            SortedStorageOp::new(sorted_transcript[1]),
+            SortedStorageOp::new(sorted_transcript[2]),
             SortedStorageOp::new(sorted_transcript[3])
         ];
 
