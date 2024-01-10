@@ -63,13 +63,13 @@ pub fn validate_sorted_transcript<N, K>(
             } else {
                 // Same slot, new counter
                 // Noir complains about the index being out of bounds even after an assert that it won't, so wrap it in a conditional
-                let idx = if i != 0 {
+                let prev_idx = if i != 0 {
                     i - 1
                 } else {
                     assert(false, "First item must change slot");
                     0
                 };
-                let prev_item = sorted_transcript_with_rewinds[idx];
+                let prev_item = sorted_transcript_with_rewinds[prev_idx];
                 if item_being_validated.rewind_target.is_none() {
                     // Base case, we are not rewinding
                     let original_op = sorted_transcript[next_op];
