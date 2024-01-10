@@ -47,24 +47,32 @@ impl Eq for StorageLeaf {
     }
 }
 
-struct StorageLinkedItem {
+struct SortedStorageOp {
     op: StorageOp,
-    prev_index: u32,
-    has_prev_leaf: bool,
+    is_rewind: Option<u32>
 }
 
-impl Default for StorageLinkedItem {
+fn is_option_eq<T>(a: Option<T>, b: Option<T>) -> bool where T: Eq {
+    if a.is_some() & b.is_some() {
+        a.unwrap().eq(b.unwrap())
+    } else if a.is_none() & b.is_none() {
+        true
+    } else {
+        false
+    }
+}
+
+impl Default for SortedStorageOp {
     fn default() -> Self {
         Self {
             op: StorageOp::default(),
-            prev_index: 0,
-            has_prev_leaf: false,
+            is_rewind: Option::none(),
         }
     }
 }
 
-impl Eq for StorageLinkedItem {
+impl Eq for SortedStorageOp {
     fn eq(self, other: Self) -> bool {
-        (self.op == other.op) & (self.prev_index == other.prev_index) & (self.has_prev_leaf == other.has_prev_leaf)
+        (self.op == other.op) & is_option_eq(self.is_rewind, other.is_rewind) 
     }
 }

@@ -2,160 +2,117 @@ mod types;
 mod utils;
 
 use utils::{is_empty, array_length, validate_array};
-use types::{StorageOp, StorageLeaf, StorageLinkedItem};
+use types::{StorageOp, StorageLeaf, SortedStorageOp};
 
-fn create_linked_linked_items<N>(
-    storage_ops: [StorageOp; N],
-    initial_leaves: [StorageLeaf; N],
-    linked_hints: [(u32, bool); N]
-) -> [StorageLinkedItem; N] {
-    // Populate the proving items with the hints
-    let mut linked_items = [StorageLinkedItem::default(); N];
-    for i in 0..N {
-        linked_items[i] = StorageLinkedItem {
-            op: storage_ops[i],
-            prev_index: linked_hints[i].0,
-            has_prev_leaf: linked_hints[i].1,
-        };
+global LEN = 100;
+
+struct Hint {
+    prev_index: u32,
+    has_prev_leaf: bool,
+    needs_rewind: Option<u32>
+}
+
+fn main(
+    sorted_transcript: [StorageOp; LEN],
+    sorted_transcript_with_rewinds: [SortedStorageOp; 2*LEN],
+    initial_leaves: [StorageLeaf; LEN]
+) {
+    // Ensure that the sorted_transcript is sorted by slot and counter
+    validate_array(sorted_transcript);
+    let sorted_transcript_length = array_length(sorted_transcript);
+    for i in 1..LEN {
+        if (i as u32) < (sorted_transcript_length as u32) {
+            let prev = sorted_transcript[i - 1];
+            let curr = sorted_transcript[i];
+            if prev.slot == curr.slot {
+                assert(prev.counter < curr.counter);
+            } else {
+                assert(dep::std::eddsa::lt_bytes32(prev.slot, curr.slot));
+            }
+        }
     }
 
     // Ensure that the initial leaves are sorted by slot.
     // This ensures that there are no duplicated leaves for a given slot.
     validate_array(initial_leaves);
     let initial_leaves_length = array_length(initial_leaves);
-    for i in 1..N {
+    for i in 1..LEN {
         if (i as u32) < (initial_leaves_length as u32) {
             assert(dep::std::eddsa::lt_bytes32(initial_leaves[i - 1].slot, initial_leaves[i].slot));
         }
     }
 
-    // Ensure that all operations are linked to a valid previous operation or initial leaf.
-    let mut leaves_targeted = [false; N];
-    let mut ops_targeted = [false; N];
+    let mut last_slot = 0;
+    let mut next_leaf = 0;
+    let mut next_op = 0;
 
-    for i in 0..N {
-        let linked_item = linked_items[i];
-        if is_empty(linked_item.op) {
-            // If the op is empty, we assert an empty proving item
-            assert(is_empty(linked_item));
-        } else if linked_item.has_prev_leaf {
-            // If the proving item points to a previous leaf, we check that it wasn't targeted before and the slot matches
-            assert(!leaves_targeted[linked_item.prev_index]);
-            leaves_targeted[linked_item.prev_index] = true;
+    for i in 0..sorted_transcript_with_rewinds.len() {
+        let item_being_validated = sorted_transcript_with_rewinds[i];
+        if !is_empty(item_being_validated) {
+            if item_being_validated.op.slot != last_slot {
+                // We are in a new slot, so we cannot be rewinding
+                assert(item_being_validated.is_rewind.is_none());
 
-            let leaf = initial_leaves[linked_item.prev_index];
-            assert(leaf.slot == linked_item.op.slot);
-        } else {
-            // If the proving item points to a previous op, we check that it wasn't targeted before and the slot matches and the counter increases
-            assert(!ops_targeted[linked_item.prev_index]);
-            ops_targeted[linked_item.prev_index] = true;
+                let original_op = sorted_transcript[next_op];
+                assert(original_op.eq(item_being_validated.op));
+                next_op += 1;
 
-            let prev_op = storage_ops[linked_item.prev_index];
-            assert(prev_op.slot == linked_item.op.slot);
-            assert(prev_op.counter <= linked_item.op.counter);
-        }
-    }
-
-    linked_items
-}
-
-fn add_rewind_to_linked_linked_items<N, K>(
-    mut linked_items: [StorageLinkedItem; N],
-    rewind_hints: [Option<u32>; N],
-    _double_len_hint: [(); K]
-) -> [StorageLinkedItem; K] {
-    assert_eq(N * 2, K);
-
-    let mut rewinds = [StorageLinkedItem::default(); N];
-
-    for i in 0..N {
-        let hint_opt = rewind_hints[i - N];
-        if hint_opt.is_some() {
-            let hint = hint_opt.unwrap();
-            assert(hint < (N as u32));
-
-            let needs_rewind_item = linked_items[i];
-            assert(!needs_rewind_item.has_prev_leaf);
-            let hinted_first_discarded_op = linked_items[hint];
-
-            assert(!is_empty(needs_rewind_item));
-            assert(!is_empty(hinted_first_discarded_op));
-
-            let last_discarded_op = linked_items[needs_rewind_item.prev_index];
-            let last_not_discarded_op = linked_items[hinted_first_discarded_op.prev_index];
-            assert(!is_empty(last_discarded_op));
-            assert(!is_empty(last_not_discarded_op));
-
-            // We are talking about the same slot
-            assert_eq(needs_rewind_item.op.slot, hinted_first_discarded_op.op.slot);
-
-            // The hinted first discarded does happen before the last discarded op
-            assert(hinted_first_discarded_op.op.counter < last_discarded_op.op.counter);
-            // They are both in the same reverted segment
-            assert(hinted_first_discarded_op.op.lifetime_end == last_discarded_op.op.lifetime_end);
-
-            // The hinted first discarded is the left boundary of the reverted segment
-            assert(last_not_discarded_op.op.counter > hinted_first_discarded_op.op.lifetime_end);
-            // The needs rewind item is the right boundary of the reverted segment
-            assert(needs_rewind_item.op.counter > last_discarded_op.op.lifetime_end);
-            // Now that we have both boundaries, we can safely add the rewind item
-            rewinds[i] = StorageLinkedItem {
-                op: StorageOp {
-                    counter: last_discarded_op.op.lifetime_end,
-                    lifetime_end: last_not_discarded_op.op.lifetime_end,
-                    is_write: true,
-                    slot: needs_rewind_item.op.slot,
-                    value: last_not_discarded_op.op.value,
-                },
-                prev_index: needs_rewind_item.prev_index,
-                has_prev_leaf: false,
-            };
-            // Now the needs rewind item points to the rewind item 
-            linked_items[i].prev_index = i + N;
-        }
-    }
-
-    let mut all_linked_items = [StorageLinkedItem::default(); K];
-    for i in 0..N {
-        all_linked_items[i] = linked_items[i];
-        all_linked_items[i + N] = rewinds[i];
-    }
-
-    all_linked_items
-}
-
-fn validate_storage_ops<N, K>(storage_ops: [StorageLinkedItem; K], initial_leaves: [StorageLeaf; N]) {
-    for i in 0..K {
-        let storage_op = storage_ops[i];
-        if !is_empty(storage_op) {
-            if storage_op.has_prev_leaf {
-                let leaf = initial_leaves[storage_op.prev_index];
-                assert(leaf.slot == storage_op.op.slot);
-                if !storage_op.op.is_write {
-                    assert_eq(leaf.value, storage_op.op.value);
+                // We are in a new slot, so we know that we are pointing against a leaf
+                let leaf = initial_leaves[next_leaf];
+                assert(leaf.slot == item_being_validated.op.slot);
+                next_leaf += 1;
+                if !item_being_validated.op.is_write {
+                    assert_eq(leaf.value, item_being_validated.op.value);
                 }
             } else {
-                let prev_op = storage_ops[storage_op.prev_index];
-                assert(prev_op.op.slot == storage_op.op.slot);
-                assert(prev_op.op.counter < storage_op.op.counter);
-                assert(prev_op.op.lifetime_end > storage_op.op.counter);
-                if !storage_op.op.is_write {
-                    assert_eq(prev_op.op.value, storage_op.op.value);
+                // Same slot, new counter
+                let idx = if i == 0 { 0 } else { i - 1 };
+                let prev_item = sorted_transcript_with_rewinds[idx];
+                if item_being_validated.is_rewind.is_none() {
+                    // Base case, we are not rewinding
+                    let original_op = sorted_transcript[next_op];
+                    assert(original_op.eq(item_being_validated.op));
+                    next_op += 1;
+
+                    if !item_being_validated.op.is_write {
+                        // The previous op must live long enough
+                        assert(prev_item.op.lifetime_end > item_being_validated.op.counter);
+                        assert_eq(prev_item.op.value, item_being_validated.op.value);
+                    }
+                } else {
+                    // Rewind!!!
+                    // We only rewind if the previous op is reverted
+                    assert(prev_item.op.lifetime_end < item_being_validated.op.counter);
+                    // The previous op must revert in a more nested segment than ours
+                    assert(prev_item.op.lifetime_end < item_being_validated.op.lifetime_end);
+                    let last_reverted_op = prev_item.op;
+
+                    // Lets validate the hint
+                    let hinted_first_reverted_op_index = item_being_validated.is_rewind.unwrap();
+                    assert(hinted_first_reverted_op_index < (i as u32));
+                    let hinted_first_reverted_op = sorted_transcript_with_rewinds[hinted_first_reverted_op_index].op;
+                    assert(hinted_first_reverted_op.slot == item_being_validated.op.slot);
+
+                    // The first reverted op must be in the same reverted segment
+                    assert(hinted_first_reverted_op.lifetime_end == last_reverted_op.lifetime_end);
+                    // The first reverted op must happen before the last reverted op
+                    assert(hinted_first_reverted_op.counter <= last_reverted_op.counter);
+
+                    let last_not_reverted_op = sorted_transcript_with_rewinds[hinted_first_reverted_op_index - 1].op;
+                    assert(last_not_reverted_op.slot == item_being_validated.op.slot);
+                    // The previous op before the first reverted op must be out of the reverted segment
+                    assert(last_not_reverted_op.lifetime_end > hinted_first_reverted_op.lifetime_end);
+
+                    // Let's validate the rewind then
+                    assert(item_being_validated.op.counter == last_reverted_op.lifetime_end);
+                    assert(item_being_validated.op.lifetime_end == last_not_reverted_op.lifetime_end);
+                    assert(item_being_validated.op.is_write);
+                    assert_eq(item_being_validated.op.value, last_not_reverted_op.value);
                 }
             }
+
+            last_slot = item_being_validated.op.slot;
         }
     }
-}
-
-global LEN = 20;
-
-fn main(
-    storage_ops: [StorageOp; LEN],
-    initial_leaves: [StorageLeaf; LEN],
-    linked_hints: [(u32, bool); LEN],
-    rewind_hints: [Option<u32>; LEN]
-) {
-    let linked_items = create_linked_linked_items(storage_ops, initial_leaves, linked_hints);
-    let with_rewinds = add_rewind_to_linked_linked_items(linked_items, rewind_hints, [(); LEN * 2]);
-    validate_storage_ops(with_rewinds, initial_leaves);
+    assert_eq(next_op, sorted_transcript_length, "All original ops must be consumed");
 }
