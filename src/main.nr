@@ -6,12 +6,6 @@ use types::{StorageOp, StorageLeaf, SortedStorageOp};
 
 global LEN = 100;
 
-struct Hint {
-    prev_index: u32,
-    has_prev_leaf: bool,
-    needs_rewind: Option<u32>
-}
-
 fn main(
     sorted_transcript: [StorageOp; LEN],
     sorted_transcript_with_rewinds: [SortedStorageOp; 2*LEN],
