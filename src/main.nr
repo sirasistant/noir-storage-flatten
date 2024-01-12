@@ -41,18 +41,38 @@ pub fn validate_sorted_transcript<N, K>(
     let mut next_leaf = 0;
     let mut next_op = 0;
 
-    for i in 0..sorted_transcript_with_rewinds.len() {
+    // First iteration
+    let item_being_validated = sorted_transcript_with_rewinds[0];
+    if !is_empty(item_being_validated) {
+        assert(item_being_validated.rewind_target.is_none(), "New slot, so we cannot rewinding");
+
+        let original_op = sorted_transcript[next_op];
+        assert(original_op.eq(item_being_validated.op), "Original op must match");
+        next_op += 1;
+
+        // We are in a new slot, so we know that we are pointing against a leaf
+        let leaf = leaves[next_leaf];
+        assert(leaf.slot == item_being_validated.op.slot, "Leaf slot must match");
+        next_leaf += 1;
+        if !item_being_validated.op.is_write {
+            assert_eq(leaf.value, item_being_validated.op.value, "Leaf value must match");
+        }
+        last_slot = item_being_validated.op.slot;
+    }
+
+    for i in 1..sorted_transcript_with_rewinds.len() {
         let item_being_validated = sorted_transcript_with_rewinds[i];
+        let original_op = sorted_transcript[next_op];
+        let leaf = leaves[next_leaf];
+
         if !is_empty(item_being_validated) {
             if item_being_validated.op.slot != last_slot {
                 assert(item_being_validated.rewind_target.is_none(), "New slot, so we cannot rewinding");
 
-                let original_op = sorted_transcript[next_op];
                 assert(original_op.eq(item_being_validated.op), "Original op must match");
                 next_op += 1;
 
                 // We are in a new slot, so we know that we are pointing against a leaf
-                let leaf = leaves[next_leaf];
                 assert(leaf.slot == item_being_validated.op.slot, "Leaf slot must match");
                 next_leaf += 1;
                 if !item_being_validated.op.is_write {
@@ -61,16 +81,9 @@ pub fn validate_sorted_transcript<N, K>(
             } else {
                 // Same slot, new counter
                 // Noir complains about the index being out of bounds even after an assert that it won't, so wrap it in a conditional
-                let prev_idx = if i != 0 {
-                    i - 1
-                } else {
-                    assert(false, "First item must change slot");
-                    0
-                };
-                let prev_item = sorted_transcript_with_rewinds[prev_idx];
+                let prev_item = sorted_transcript_with_rewinds[i - 1];
                 if item_being_validated.rewind_target.is_none() {
                     // Base case, we are not rewinding
-                    let original_op = sorted_transcript[next_op];
                     assert(original_op.eq(item_being_validated.op), "Original op must match");
                     next_op += 1;
 
