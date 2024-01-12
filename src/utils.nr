@@ -116,15 +116,15 @@ pub fn decompose(x: Field) -> (Field, Field) {
     let (xlo, xhi) = decompose_unsafe(x);
     let borrow = lt_bytes16_unsafe(PLO, xlo);
 
-    xlo.apply_range_constraint(128);
-    xhi.apply_range_constraint(128);
+    xlo.assert_maximum_bit_size(128);
+    xhi.assert_maximum_bit_size(128);
 
     assert_eq(x, xlo + TWO_POW_128 * xhi);
     let rlo = PLO - xlo + (borrow as Field) * TWO_POW_128;
     let rhi = PHI - xhi - (borrow as Field);
 
-    rlo.apply_range_constraint(128);
-    rhi.apply_range_constraint(128);
+    rlo.assert_maximum_bit_size(128);
+    rhi.assert_maximum_bit_size(128);
 
     (xlo, xhi)
 }
@@ -138,8 +138,8 @@ pub fn assert_gt(a: Field, b: Field) {
     let rlo = alo - blo - 1 + (borrow as Field) * TWO_POW_128;
     let rhi = ahi - bhi - (borrow as Field);
 
-    rlo.apply_range_constraint(128);
-    rhi.apply_range_constraint(128);
+    rlo.assert_maximum_bit_size(128);
+    rhi.assert_maximum_bit_size(128);
 }
 
 #[test]
