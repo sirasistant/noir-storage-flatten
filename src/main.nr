@@ -1,7 +1,7 @@
 mod types;
 mod utils;
 
-use utils::{is_empty, array_length, validate_array};
+use utils::{is_empty, array_length, validate_array, assert_gt};
 use types::{StorageOp, StorageLeaf, SortedStorageOp};
 
 pub fn validate_sorted_transcript<N, K>(
@@ -22,7 +22,7 @@ pub fn validate_sorted_transcript<N, K>(
             if prev.slot == curr.slot {
                 assert(prev.counter < curr.counter, "Same slot, counter must be increasing");
             } else {
-                assert(dep::std::eddsa::lt_bytes32(prev.slot, curr.slot), "Slot must be increasing");
+                assert_gt(curr.slot, prev.slot);
             }
         }
     }
@@ -33,9 +33,7 @@ pub fn validate_sorted_transcript<N, K>(
     let leaves_length = array_length(leaves);
     for i in 1..leaves.len() {
         if (i as u32) < (leaves_length as u32) {
-            assert(
-                dep::std::eddsa::lt_bytes32(leaves[i - 1].slot, leaves[i].slot), "Slot must be increasing"
-            );
+            assert_gt(leaves[i].slot, leaves[i - 1].slot);
         }
     }
 
